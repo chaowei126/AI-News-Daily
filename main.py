@@ -7,7 +7,7 @@ from email.mime.text import MIMEText
 
 # --- 配置区 ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-MODEL_ID = "gemini-2.0-flash" 
+MODEL_ID = "gemini-1.5-flash" 
 
 # RSS 新闻源
 NEWS_FEEDS = [
