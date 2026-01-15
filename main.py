@@ -1,3 +1,4 @@
+import os  # <--- 修复：必须导入 os 库才能读取 Secrets
 import feedparser
 from google import genai
 import smtplib
@@ -6,22 +7,21 @@ from email.mime.text import MIMEText
 
 # --- 配置区 ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-# 推荐使用 Flash 模型，速度快且免费
 MODEL_ID = "gemini-2.0-flash" 
 
-# RSS 新闻源 (可以添加多个)
+# RSS 新闻源
 NEWS_FEEDS = [
-    "https://rss.slashdot.org/Slashdot/slashdotMain", # 科技新闻示例
-    "https://feeds.bbci.co.uk/news/world/rss.xml"    # 国际新闻示例
+    "https://rss.slashdot.org/Slashdot/slashdotMain",
+    "https://feeds.bbci.co.uk/news/world/rss.xml"
 ]
 
 # 邮件配置
-SMTP_SERVER = "smtp.gmail.com" # 如果是163则是 smtp.163.com
+SMTP_SERVER = "smtp.gmail.com" 
 SMTP_PORT = 587
 SENDER_EMAIL = os.getenv("EMAIL_USER")
 SENDER_PASSWORD = os.getenv("EMAIL_PASS")
-RECEIVER_EMAIL = "接收者的邮箱@example.com"
-
+# 建议：这里也可以改成 os.getenv("RECEIVER_EMAIL")，或者直接写死你的接收邮箱
+RECEIVER_EMAIL = "你的实际接收邮箱@example.com" 
 
 # --- 第一步：抓取新闻 ---
 def fetch_news():
@@ -29,13 +29,19 @@ def fetch_news():
     all_news = []
     for url in NEWS_FEEDS:
         feed = feedparser.parse(url)
-        for entry in feed.entries[:5]: # 每个源取前 5 条
-            all_news.append(f"标题: {entry.title}\n链接: {entry.link}\n摘要: {entry.get('summary', '')}\n")
+        # 增加容错：检查 feed 是否抓取成功
+        if hasattr(feed, 'entries'):
+            for entry in feed.entries[:5]:
+                all_news.append(f"标题: {entry.title}\n链接: {entry.link}\n摘要: {entry.get('summary', '')}\n")
     return "\n---\n".join(all_news)
 
 # --- 第二步：Gemini AI 总结 ---
 def summarize_news(raw_text):
     print("正在调用 Gemini 进行 AI 总结...")
+    # 确保 API Key 存在
+    if not GEMINI_API_KEY:
+        raise ValueError("未找到 GEMINI_API_KEY，请检查 GitHub Secrets 配置")
+    
     client = genai.Client(api_key=GEMINI_API_KEY)
     
     prompt = f"""
@@ -59,7 +65,6 @@ def send_email(content_html):
     msg['To'] = RECEIVER_EMAIL
     msg['Subject'] = "🌟 今日 AI 精选要闻简报"
 
-    # 邮件正文模版
     html_template = f"""
     <html>
       <body style="font-family: 'Microsoft YaHei', sans-serif; line-height: 1.6; color: #333;">
@@ -77,18 +82,17 @@ def send_email(content_html):
 
     try:
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls() # 启用安全传输
+            server.starttls()
             server.login(SENDER_EMAIL, SENDER_PASSWORD)
             server.send_message(msg)
         print("邮件发送成功！")
     except Exception as e:
         print(f"邮件发送失败: {e}")
 
-# --- 执行主程序 ---
 if __name__ == "__main__":
     raw_news = fetch_news()
     if raw_news:
         summary_html = summarize_news(raw_news)
         send_email(summary_html)
     else:
-        print("没有抓取到新闻。")
+        print("没有抓取到新闻内容，请检查 RSS 源是否可用。")
