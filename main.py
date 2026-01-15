@@ -5,7 +5,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 # --- 配置区 ---
-GEMINI_API_KEY = "你的_GEMINI_API_KEY"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # 推荐使用 Flash 模型，速度快且免费
 MODEL_ID = "gemini-2.0-flash" 
 
@@ -18,9 +18,10 @@ NEWS_FEEDS = [
 # 邮件配置
 SMTP_SERVER = "smtp.gmail.com" # 如果是163则是 smtp.163.com
 SMTP_PORT = 587
-SENDER_EMAIL = "你的邮箱@gmail.com"
-SENDER_PASSWORD = "你的授权码" # 注意：不是登录密码
+SENDER_EMAIL = os.getenv("EMAIL_USER")
+SENDER_PASSWORD = os.getenv("EMAIL_PASS")
 RECEIVER_EMAIL = "接收者的邮箱@example.com"
+
 
 # --- 第一步：抓取新闻 ---
 def fetch_news():
