@@ -1,5 +1,3 @@
----
-
 ```markdown
 # 🤖 AI-News-Daily: 基于 Gemini 的自动新闻简报
 
