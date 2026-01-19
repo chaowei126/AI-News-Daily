@@ -39,7 +39,7 @@ SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SENDER_EMAIL = os.getenv("EMAIL_USER")
 SENDER_PASSWORD = os.getenv("EMAIL_PASS")
-RECEIVER_EMAIL = "your-real-email@example.com"
+RECEIVER_EMAIL = os.getenv("EMAIL_USER")
 
 
 # -------------------------
@@ -118,26 +118,37 @@ def summarize_news(raw_text):
     logging.info("Generating summary")
 
     prompt = f"""
-You are a professional tech news editor.
+You are a professional news editor specializing in technology, AI, and U.S.-related global affairs.
 
-Summarize the following raw news content into **3–5 key tech or AI stories**:
+Summarize the following raw news content into **3–5 key stories**:
 
 {raw_text}
 
-Requirements:
-1. Only include tech, AI, or science-related news.
-2. Each item must include:
+Selection rules:
+1. Prioritize technology, AI, and science-related news.
+2. If there are not enough tech/AI stories, include major U.S.-related international news such as:
+   - U.S. foreign policy
+   - U.S.–Iran relations
+   - U.S.–China relations
+   - U.S.–Russia relations
+   - U.S. involvement in global conflicts
+   - Geopolitical issues involving the U.S. (e.g., Greenland, Arctic strategy)
+3. Do NOT include minor local news, sports, entertainment, or unrelated topics.
+4. Do NOT invent or fabricate any news.
+
+Output rules:
+1. Each item must include:
    - A short title (max 12 words)
    - A one-sentence summary (max 30 words)
-3. Output MUST be in HTML <li> format:
+2. Output MUST be in HTML <li> format:
 
 <li>
   <strong>Title:</strong> xxx<br>
   <span>Summary: xxx</span>
 </li>
 
-Do NOT add explanations or extra text.
-Only output the <li> items.
+3. Do NOT add explanations, introductions, or extra text.
+4. Only output the <li> items.
 """
 
     return call_openrouter([{"role": "user", "content": prompt}])
