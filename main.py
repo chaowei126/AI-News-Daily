@@ -1,65 +1,166 @@
-import os  # <--- 修复：必须导入 os 库才能读取 Secrets
+import os
+import time
+import logging
 import feedparser
-from google import genai
+import requests
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-# --- 配置区 ---
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-MODEL_ID = "gemini-1.5-flash" 
+# -------------------------
+# 日志配置
+# -------------------------
+logging.basicConfig(
+    filename="news_bot.log",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
-# RSS 新闻源
+logging.info("程序启动")
+
+# -------------------------
+# 配置区
+# -------------------------
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+MODEL_ID = "qwen/qwen-2.5-7b-instruct"
+
 NEWS_FEEDS = [
     "https://rss.slashdot.org/Slashdot/slashdotMain",
     "https://feeds.bbci.co.uk/news/world/rss.xml"
 ]
 
-# 邮件配置
-SMTP_SERVER = "smtp.gmail.com" 
+SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SENDER_EMAIL = os.getenv("EMAIL_USER")
 SENDER_PASSWORD = os.getenv("EMAIL_PASS")
-# 建议：这里也可以改成 os.getenv("RECEIVER_EMAIL")，或者直接写死你的接收邮箱
-RECEIVER_EMAIL = "你的实际接收邮箱@example.com" 
+RECEIVER_EMAIL = "你的实际接收邮箱@example.com"
 
-# --- 第一步：抓取新闻 ---
+
+# -------------------------
+# 工具函数：OpenRouter API 调用（带重试）
+# -------------------------
+def call_openrouter(messages, model=MODEL_ID, max_retries=3):
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "HTTP-Referer": "http://localhost",
+        "X-Title": "News Summary Script"
+    }
+
+    payload = {
+        "model": model,
+        "messages": messages
+    }
+
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=20)
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
+
+        except Exception as e:
+            wait = 2 ** attempt
+            logging.warning(f"API 调用失败（第 {attempt+1} 次），错误：{e}，等待 {wait}s 重试")
+            time.sleep(wait)
+
+    logging.error("API 多次重试仍失败")
+    raise RuntimeError("OpenRouter API 调用失败")
+
+
+# -------------------------
+# 自动翻译（非中文 → 中文）
+# -------------------------
+def translate_to_chinese(text):
+    logging.info("检测并翻译新闻内容")
+
+    detect_prompt = f"请判断以下文本是否为中文，只回答 '是' 或 '否'：\n{text[:200]}"
+    is_chinese = call_openrouter([{"role": "user", "content": detect_prompt}])
+
+    if "是" in is_chinese:
+        return text
+
+    logging.info("检测到非中文新闻，开始翻译")
+
+    translate_prompt = f"请将以下内容翻译成中文：\n{text}"
+    return call_openrouter([{"role": "user", "content": translate_prompt}])
+
+
+# -------------------------
+# 抓取新闻 + 去重 + 翻译
+# -------------------------
 def fetch_news():
-    print("正在抓取新闻...")
+    logging.info("开始抓取新闻")
     all_news = []
+    seen_titles = set()
+
     for url in NEWS_FEEDS:
         feed = feedparser.parse(url)
-        # 增加容错：检查 feed 是否抓取成功
         if hasattr(feed, 'entries'):
             for entry in feed.entries[:5]:
-                all_news.append(f"标题: {entry.title}\n链接: {entry.link}\n摘要: {entry.get('summary', '')}\n")
+                title = entry.title.strip()
+
+                # 去重
+                if title in seen_titles:
+                    continue
+                seen_titles.add(title)
+
+                summary = entry.get("summary", "")
+                link = entry.link
+
+                # 翻译标题和摘要
+                title_cn = translate_to_chinese(title)
+                summary_cn = translate_to_chinese(summary)
+
+                all_news.append(
+                    f"标题: {title_cn}\n链接: {link}\n摘要: {summary_cn}\n"
+                )
+
+    logging.info(f"抓取完成，共 {len(all_news)} 条新闻")
     return "\n---\n".join(all_news)
 
-# --- 第二步：Gemini AI 总结 ---
-def summarize_news(raw_text):
-    print("正在调用 Gemini 进行 AI 总结...")
-    # 确保 API Key 存在
-    if not GEMINI_API_KEY:
-        raise ValueError("未找到 GEMINI_API_KEY，请检查 GitHub Secrets 配置")
-    
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    
-    prompt = f"""
-    你是一个专业的新闻编辑。请分析以下抓取到的原始新闻内容：
-    {raw_text}
-    
-    任务：
-    1. 请多关注AI科技新闻，选出最值得关注的 3-5 条。
-    2. 用中文总结每条新闻的核心内容（50字以内）。
-    3. 输出格式要求为 HTML 的 <li> 列表项。
-    """
-    
-    response = client.models.generate_content(model=MODEL_ID, contents=prompt)
-    return response.text
 
-# --- 第三步：发送邮件 ---
+# -------------------------
+# 新闻摘要
+# -------------------------
+def summarize_news(raw_text):
+    logging.info("开始生成摘要")
+
+    prompt = f"""
+你是一名专业的科技新闻编辑，擅长从大量资讯中提取重点。
+
+请根据以下原始新闻内容，完成高质量摘要：
+{raw_text}
+
+【任务要求】
+1. 从所有新闻中筛选出 **最值得关注的 3–5 条科技或 AI 相关内容**。
+2. 每条新闻需包含：
+   - **一句话标题（10–15 字）**
+   - **一句话摘要（不超过 40 字）**
+3. 输出格式必须为 HTML 的 <li> 列表项，结构如下：
+
+<li>
+  <strong>标题：</strong>xxx<br>
+  <span>摘要：xxx</span>
+</li>
+
+【注意事项】
+- 不要编造不存在的新闻。
+- 不要输出与科技或 AI 无关的内容。
+- 不要添加额外解释或前后缀。
+- 输出必须是纯 HTML 列表项，不要包含 <ul> 标签。
+"""
+
+    return call_openrouter([{"role": "user", "content": prompt}])
+
+
+# -------------------------
+# 发送邮件
+# -------------------------
 def send_email(content_html):
-    print("正在发送邮件...")
+    logging.info("开始发送邮件")
+
     msg = MIMEMultipart()
     msg['From'] = SENDER_EMAIL
     msg['To'] = RECEIVER_EMAIL
@@ -77,7 +178,7 @@ def send_email(content_html):
       </body>
     </html>
     """
-    
+
     msg.attach(MIMEText(html_template, 'html'))
 
     try:
@@ -85,14 +186,21 @@ def send_email(content_html):
             server.starttls()
             server.login(SENDER_EMAIL, SENDER_PASSWORD)
             server.send_message(msg)
-        print("邮件发送成功！")
+        logging.info("邮件发送成功")
     except Exception as e:
-        print(f"邮件发送失败: {e}")
+        logging.error(f"邮件发送失败: {e}")
 
+
+# -------------------------
+# 主程序
+# -------------------------
 if __name__ == "__main__":
-    raw_news = fetch_news()
-    if raw_news:
-        summary_html = summarize_news(raw_news)
-        send_email(summary_html)
-    else:
-        print("没有抓取到新闻内容，请检查 RSS 源是否可用。")
+    try:
+        raw_news = fetch_news()
+        if raw_news:
+            summary_html = summarize_news(raw_news)
+            send_email(summary_html)
+        else:
+            logging.warning("没有抓取到新闻内容")
+    except Exception as e:
+        logging.error(f"程序运行失败：{e}")
