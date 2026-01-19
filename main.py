@@ -8,7 +8,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 # -------------------------
-# 日志配置
+# Logging
 # -------------------------
 logging.basicConfig(
     filename="news_bot.log",
@@ -16,13 +16,19 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-logging.info("程序启动")
+logging.info("Program started")
 
 # -------------------------
-# 配置区
+# Config
 # -------------------------
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-MODEL_ID = "google/gemma-3-27b-it:free"
+
+# Free model fallback list (priority order)
+FREE_MODELS = [
+    "qwen/qwen3-coder:free",
+    "google/gemma-3-27b-it:free",
+    "meta-llama/llama-3.3-70b-instruct:free"
+]
 
 NEWS_FEEDS = [
     "https://rss.slashdot.org/Slashdot/slashdotMain",
@@ -33,13 +39,13 @@ SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SENDER_EMAIL = os.getenv("EMAIL_USER")
 SENDER_PASSWORD = os.getenv("EMAIL_PASS")
-RECEIVER_EMAIL = "你的实际接收邮箱@example.com"
+RECEIVER_EMAIL = "your-real-email@example.com"
 
 
 # -------------------------
-# 工具函数：OpenRouter API 调用（带重试）
+# OpenRouter API with fallback
 # -------------------------
-def call_openrouter(messages, model=MODEL_ID, max_retries=3):
+def call_openrouter(messages, max_retries=3):
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Content-Type": "application/json",
@@ -48,60 +54,48 @@ def call_openrouter(messages, model=MODEL_ID, max_retries=3):
         "X-Title": "News Summary Script"
     }
 
-    payload = {
-        "model": model,
-        "messages": messages
-    }
+    for model in FREE_MODELS:
+        logging.info(f"Trying model: {model}")
 
-    for attempt in range(max_retries):
-        try:
-            response = requests.post(url, headers=headers, json=payload, timeout=20)
-            response.raise_for_status()
-            data = response.json()
-            return data["choices"][0]["message"]["content"]
+        payload = {
+            "model": model,
+            "messages": messages
+        }
 
-        except Exception as e:
-            wait = 2 ** attempt
-            logging.warning(f"API 调用失败（第 {attempt+1} 次），错误：{e}，等待 {wait}s 重试")
-            time.sleep(wait)
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url, headers=headers, json=payload, timeout=30)
+                response.raise_for_status()
+                data = response.json()
+                logging.info(f"Model succeeded: {model}")
+                return data["choices"][0]["message"]["content"]
 
-    logging.error("API 多次重试仍失败")
-    raise RuntimeError("OpenRouter API 调用失败")
+            except Exception as e:
+                wait = 2 ** attempt
+                logging.warning(
+                    f"Model {model} failed (attempt {attempt+1}): {e}, waiting {wait}s"
+                )
+                time.sleep(wait)
 
+        logging.warning(f"Model failed completely: {model}, switching to next model")
 
-# -------------------------
-# 自动翻译（非中文 → 中文）
-# -------------------------
-def translate_to_chinese(text):
-    logging.info("检测并翻译新闻内容")
-
-    detect_prompt = f"请判断以下文本是否为中文，只回答 '是' 或 '否'：\n{text[:200]}"
-    is_chinese = call_openrouter([{"role": "user", "content": detect_prompt}])
-
-    if "是" in is_chinese:
-        return text
-
-    logging.info("检测到非中文新闻，开始翻译")
-
-    translate_prompt = f"请将以下内容翻译成中文：\n{text}"
-    return call_openrouter([{"role": "user", "content": translate_prompt}])
+    logging.error("All models failed after fallback attempts")
+    raise RuntimeError("All OpenRouter models failed")
 
 
 # -------------------------
-# 抓取新闻 + 去重 + 翻译
+# Fetch English news
 # -------------------------
 def fetch_news():
-    logging.info("开始抓取新闻")
+    logging.info("Fetching RSS feeds")
     all_news = []
     seen_titles = set()
 
     for url in NEWS_FEEDS:
         feed = feedparser.parse(url)
-        if hasattr(feed, 'entries'):
+        if hasattr(feed, "entries"):
             for entry in feed.entries[:5]:
                 title = entry.title.strip()
-
-                # 去重
                 if title in seen_titles:
                     continue
                 seen_titles.add(title)
@@ -109,90 +103,84 @@ def fetch_news():
                 summary = entry.get("summary", "")
                 link = entry.link
 
-                # 翻译标题和摘要
-                title_cn = translate_to_chinese(title)
-                summary_cn = translate_to_chinese(summary)
-
                 all_news.append(
-                    f"标题: {title_cn}\n链接: {link}\n摘要: {summary_cn}\n"
+                    f"Title: {title}\nLink: {link}\nSummary: {summary}\n"
                 )
 
-    logging.info(f"抓取完成，共 {len(all_news)} 条新闻")
+    logging.info(f"Fetched {len(all_news)} news items")
     return "\n---\n".join(all_news)
 
 
 # -------------------------
-# 新闻摘要
+# Summarize news (English)
 # -------------------------
 def summarize_news(raw_text):
-    logging.info("开始生成摘要")
+    logging.info("Generating summary")
 
     prompt = f"""
-你是一名专业的科技新闻编辑，擅长从大量资讯中提取重点。
+You are a professional tech news editor.
 
-请根据以下原始新闻内容，完成高质量摘要：
+Summarize the following raw news content into **3–5 key tech or AI stories**:
+
 {raw_text}
 
-【任务要求】
-1. 从所有新闻中筛选出 **最值得关注的 3–5 条科技或 AI 相关内容**。
-2. 每条新闻需包含：
-   - **一句话标题（10–15 字）**
-   - **一句话摘要（不超过 40 字）**
-3. 输出格式必须为 HTML 的 <li> 列表项，结构如下：
+Requirements:
+1. Only include tech, AI, or science-related news.
+2. Each item must include:
+   - A short title (max 12 words)
+   - A one-sentence summary (max 30 words)
+3. Output MUST be in HTML <li> format:
 
 <li>
-  <strong>标题：</strong>xxx<br>
-  <span>摘要：xxx</span>
+  <strong>Title:</strong> xxx<br>
+  <span>Summary: xxx</span>
 </li>
 
-【注意事项】
-- 不要编造不存在的新闻。
-- 不要输出与科技或 AI 无关的内容。
-- 不要添加额外解释或前后缀。
-- 输出必须是纯 HTML 列表项，不要包含 <ul> 标签。
+Do NOT add explanations or extra text.
+Only output the <li> items.
 """
 
     return call_openrouter([{"role": "user", "content": prompt}])
 
 
 # -------------------------
-# 发送邮件
+# Send email
 # -------------------------
 def send_email(content_html):
-    logging.info("开始发送邮件")
+    logging.info("Sending email")
 
     msg = MIMEMultipart()
-    msg['From'] = SENDER_EMAIL
-    msg['To'] = RECEIVER_EMAIL
-    msg['Subject'] = "🌟 今日 AI 精选要闻简报"
+    msg["From"] = SENDER_EMAIL
+    msg["To"] = RECEIVER_EMAIL
+    msg["Subject"] = "🌐 Daily AI & Tech News Summary"
 
     html_template = f"""
     <html>
-      <body style="font-family: 'Microsoft YaHei', sans-serif; line-height: 1.6; color: #333;">
-        <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">今日新闻摘要</h2>
+      <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+        <h2 style="color: #2c3e50;">Daily Tech & AI News Summary</h2>
         <ul>
           {content_html}
         </ul>
         <hr>
-        <p style="font-size: 12px; color: #7f8c8d;">此邮件由 AI 自动生成推送。</p>
+        <p style="font-size: 12px; color: #888;">This email was automatically generated.</p>
       </body>
     </html>
     """
 
-    msg.attach(MIMEText(html_template, 'html'))
+    msg.attach(MIMEText(html_template, "html"))
 
     try:
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
             server.starttls()
             server.login(SENDER_EMAIL, SENDER_PASSWORD)
             server.send_message(msg)
-        logging.info("邮件发送成功")
+        logging.info("Email sent successfully")
     except Exception as e:
-        logging.error(f"邮件发送失败: {e}")
+        logging.error(f"Email failed: {e}")
 
 
 # -------------------------
-# 主程序
+# Main
 # -------------------------
 if __name__ == "__main__":
     try:
@@ -201,6 +189,6 @@ if __name__ == "__main__":
             summary_html = summarize_news(raw_news)
             send_email(summary_html)
         else:
-            logging.warning("没有抓取到新闻内容")
+            logging.warning("No news fetched")
     except Exception as e:
-        logging.error(f"程序运行失败：{e}")
+        logging.error(f"Program failed: {e}")
