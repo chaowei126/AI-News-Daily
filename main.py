@@ -22,7 +22,7 @@ logging.info("程序启动")
 # 配置区
 # -------------------------
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-MODEL_ID = "meta-llama/llama-3.1-8b-instruct:free"
+MODEL_ID = "google/gemma-3-27b-it:free"
 
 NEWS_FEEDS = [
     "https://rss.slashdot.org/Slashdot/slashdotMain",
