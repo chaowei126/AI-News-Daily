@@ -94,7 +94,7 @@ def fetch_news():
     for url in NEWS_FEEDS:
         feed = feedparser.parse(url)
         if hasattr(feed, "entries"):
-            for entry in feed.entries[:5]:
+            for entry in feed.entries[:10]:
                 title = entry.title.strip()
                 if title in seen_titles:
                     continue
@@ -120,7 +120,7 @@ def summarize_news(raw_text):
     prompt = f"""
 You are a professional news editor specializing in technology, AI, and U.S.-related global affairs.
 
-Summarize the following raw news content into **3–5 key stories**:
+Summarize the following raw news content into **8–10 key stories**:
 
 {raw_text}
 
@@ -137,10 +137,11 @@ Selection rules:
 4. Do NOT invent or fabricate any news.
 
 Output rules:
-1. Each item must include:
-   - A short title (max 12 words)
-   - A one-sentence summary (max 30 words)
-2. Output MUST be in HTML <li> format:
+1. All content must be in Simplified Chinese.
+2. Each entry must include:
+   - A short title (maximum 15 Chinese characters)
+   - A one-sentence summary (maximum 50 Chinese characters)
+3. Output MUST be in HTML <li> format:
 
 <li>
   <strong>Title:</strong> xxx<br>
