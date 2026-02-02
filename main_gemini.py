@@ -3,7 +3,7 @@ import time
 import logging
 import feedparser
 import smtplib
-from google import genai
+from google import genai  # 导入最新版 SDK
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -15,7 +15,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-logging.info("程序启动 (使用最新版 google-genai SDK)")
+logging.info("程序启动 (方案 2: 使用 google-genai 最新 SDK)")
 
 # -------------------------
 # 配置读取
@@ -30,18 +30,22 @@ NEWS_FEEDS = [
     "https://feeds.bbci.co.uk/news/world/rss.xml"
 ]
 
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-
-# 初始化新版 Gemini 客户端
+# -------------------------
+# 初始化 Gemini 客户端
+# -------------------------
 client = None
 if GEMINI_API_KEY:
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    try:
+        # 初始化客户端，新版 SDK 会自动处理 v1beta 逻辑
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        logging.info("Gemini 客户端初始化成功")
+    except Exception as e:
+        logging.error(f"客户端初始化失败: {e}")
 else:
-    logging.error("未找到 GEMINI_API_KEY，请检查环境变量。")
+    logging.error("未找到 GEMINI_API_KEY，请检查 GitHub Secrets 设置")
 
 # -------------------------
-# Gemini API 调用 (新版语法)
+# Gemini API 调用
 # -------------------------
 def call_gemini(prompt, max_retries=3):
     if not client:
@@ -49,31 +53,29 @@ def call_gemini(prompt, max_retries=3):
 
     for attempt in range(max_retries):
         try:
-            # 使用最新的 SDK 调用方式
+            # 修正点：直接使用简短模型名称 "gemini-1.5-flash"
             response = client.models.generate_content(
-                model="gemini-1.5-flash",
+                model="gemini-1.5-flash", 
                 contents=prompt
             )
 
-            if response.text:
-                logging.info("Gemini 生成成功")
+            if response and response.text:
                 return response.text
             else:
-                logging.warning("Gemini 返回空响应")
+                logging.warning("Gemini 返回响应内容为空")
 
         except Exception as e:
             wait = 2 ** attempt
-            logging.warning(f"Gemini 调用失败 (尝试 {attempt+1}): {e}, 等待 {wait}s")
+            logging.warning(f"Gemini 调用失败 (第 {attempt+1} 次): {e}, {wait}s 后重试")
             time.sleep(wait)
 
-    logging.error("Gemini API 多次重试后失败")
-    raise RuntimeError("Gemini API failed")
+    raise RuntimeError("Gemini API 在多次重试后仍然返回 404 或其他错误")
 
 # -------------------------
 # 获取新闻内容
 # -------------------------
 def fetch_news():
-    logging.info("正在抓取 RSS 源")
+    logging.info("正在抓取 RSS 源...")
     all_news = []
     seen_titles = set()
 
@@ -85,21 +87,18 @@ def fetch_news():
                 if title in seen_titles:
                     continue
                 seen_titles.add(title)
-
                 summary = entry.get("summary", "")
-                link = entry.link
-                all_news.append(f"Title: {title}\nLink: {link}\nSummary: {summary}\n")
+                all_news.append(f"Title: {title}\nSummary: {summary}\n")
         except Exception as e:
-            logging.error(f"抓取 {url} 失败: {e}")
+            logging.error(f"抓取失败 {url}: {e}")
 
-    logging.info(f"共抓取到 {len(all_news)} 条新闻")
     return "\n---\n".join(all_news)
 
 # -------------------------
-# 生成摘要 (HTML 格式)
+# 生成摘要
 # -------------------------
 def summarize_news(raw_text):
-    logging.info("正在生成 AI 摘要...")
+    logging.info("正在调用 AI 生成摘要...")
     prompt = f"""
 你是一位专业的科技新闻编辑。请将以下新闻内容总结为 8–10 条精选项目，并翻译成简体中文。
 
@@ -122,29 +121,20 @@ def summarize_news(raw_text):
 # 发送邮件
 # -------------------------
 def send_email(content_html):
-    logging.info("正在发送邮件...")
+    if not SENDER_EMAIL or not SENDER_PASSWORD:
+        logging.error("邮件配置缺失 (EMAIL_USER 或 EMAIL_PASS)")
+        return
+
     msg = MIMEMultipart()
     msg["From"] = SENDER_EMAIL
     msg["To"] = RECEIVER_EMAIL
     msg["Subject"] = "🌐 每日 AI & 科技新闻摘要"
 
-    html_template = f"""
-    <html>
-      <body style="font-family: 'Microsoft YaHei', Arial, sans-serif; line-height: 1.6; color: #333;">
-        <h2 style="color: #2c3e50;">每日科技 & AI 新闻精选</h2>
-        <ul>
-          {content_html}
-        </ul>
-        <hr>
-        <p style="font-size: 12px; color: #888;">本邮件由 Gemini 1.5 Flash 自动生成。</p>
-      </body>
-    </html>
-    """
-
+    html_template = f"<html><body><ul>{content_html}</ul></body></html>"
     msg.attach(MIMEText(html_template, "html"))
 
     try:
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
             server.starttls()
             server.login(SENDER_EMAIL, SENDER_PASSWORD)
             server.send_message(msg)
@@ -153,7 +143,7 @@ def send_email(content_html):
         logging.error(f"邮件发送失败: {e}")
 
 # -------------------------
-# 主程序
+# 主入口
 # -------------------------
 if __name__ == "__main__":
     try:
@@ -162,6 +152,6 @@ if __name__ == "__main__":
             summary_html = summarize_news(raw_news)
             send_email(summary_html)
         else:
-            logging.warning("未获取到任何新闻内容")
+            logging.warning("未抓取到新闻")
     except Exception as e:
-        logging.error(f"程序运行出错: {e}")
+        logging.error(f"程序终止: {e}")
