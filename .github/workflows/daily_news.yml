@@ -28,7 +28,7 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
-        run: python main.py
+        run: python main_gemini.py
 
       - name: Show logs
         run: cat news_bot.log || true
