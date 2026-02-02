@@ -120,7 +120,7 @@ def summarize_news(raw_text):
     prompt = f"""
 You are a professional news editor specializing in technology, AI, and U.S.-related global affairs.
 
-Summarize the following raw news content into **8–10 key stories**:
+Summarize the following raw news content into **6–8 key stories**:
 
 {raw_text}
 
