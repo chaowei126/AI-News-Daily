@@ -61,6 +61,11 @@ def _call_model(model: str, messages: list) -> str:
     response = requests.post(
         _ENDPOINT, headers=headers, json=payload, timeout=_TIMEOUT
     )
+
+    # Log response body on client errors to aid debugging
+    if response.status_code >= 400:
+        logger.debug("OpenRouter error body: %s", response.text[:500])
+
     response.raise_for_status()
 
     data = response.json()
@@ -87,7 +92,7 @@ def summarize(articles: List[Article]) -> str:
                 logger.info("Model succeeded: %s", model)
                 return result
             except Exception as exc:
-                wait = 2 ** attempt
+                wait = config.llm_retry_base_wait * (2 ** attempt)
                 logger.warning(
                     "Model %s attempt %d/%d failed: %s – retrying in %ds",
                     model,

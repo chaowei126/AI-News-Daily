@@ -30,8 +30,6 @@ class SerperFetcher(BaseFetcher):
         payload = {
             "q": query,
             "num": max_results,
-            "hl": "en",   # response language hint
-            "gl": "us",   # geo location hint
         }
 
         response = requests.post(

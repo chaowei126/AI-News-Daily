@@ -60,15 +60,20 @@ class AppConfig:
     openrouter_api_key: str = field(
         default_factory=lambda: _require("OPENROUTER_API_KEY")
     )
-    # Free-tier model priority list; first healthy model wins
+    # Free-tier model priority list; first healthy model wins.
+    # openrouter/free auto-selects from all available free models (recommended).
+    # Specific models are fallbacks in case the auto-router is unavailable.
     llm_models: List[str] = field(
         default_factory=lambda: [
-            "qwen/qwen3-coder:free",
+            "openrouter/free",
+            "deepseek/deepseek-chat:free",
             "google/gemma-3-27b-it:free",
             "meta-llama/llama-3.3-70b-instruct:free",
         ]
     )
-    llm_max_retries: int = 3
+    llm_max_retries: int = 2
+    # Base wait seconds between retries (exponential: base * 2^attempt)
+    llm_retry_base_wait: int = 5
 
     # ── Email ──────────────────────────────────────────────────────────────
     smtp_server: str = field(default_factory=lambda: _optional("SMTP_SERVER", "smtp.gmail.com"))
