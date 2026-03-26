@@ -1,35 +1,46 @@
-name: Daily News Automation
+name: Daily News Digest
 
 on:
   schedule:
-    # 每天北京时间早上 8:00 运行 (UTC 时间 0:00)
+    # 每天北京时间 08:00 运行（UTC 00:00）
     - cron: '0 0 * * *'
+  # 支持手动触发，方便调试
   workflow_dispatch:
 
 jobs:
-  build:
+  run-digest:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
+          cache: pip
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
-      - name: Run script
+      - name: Run pipeline
         env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          EMAIL_USER: ${{ secrets.EMAIL_USER }}
-          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
-        run: python main_openrouter.py
+          SERPER_API_KEY:      ${{ secrets.SERPER_API_KEY }}
+          NEWS_API_KEY:        ${{ secrets.NEWS_API_KEY }}
+          OPENROUTER_API_KEY:  ${{ secrets.OPENROUTER_API_KEY }}
+          EMAIL_USER:          ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS:          ${{ secrets.EMAIL_PASS }}
+          # Optional overrides (uncomment to use)
+          # RECEIVER_EMAIL:    ${{ secrets.RECEIVER_EMAIL }}
+          # NEWS_QUERY:        "AI OR machine learning OR technology"
+        run: python main.py
 
-      - name: Show logs
-        run: cat news_bot.log || true
+      - name: Upload log artifact (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: news-bot-log
+          path: news_bot.log
+          retention-days: 7
