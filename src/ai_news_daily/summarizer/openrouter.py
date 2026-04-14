@@ -89,6 +89,8 @@ def summarize(articles: List[Article]) -> str:
         for attempt in range(config.llm_max_retries):
             try:
                 result = _call_model(model, messages)
+                if not result:
+                    raise ValueError(f"Model {model} returned empty or null content.")
                 logger.info("Model succeeded: %s", model)
                 return result
             except Exception as exc:
