@@ -35,6 +35,13 @@ class SerperFetcher(BaseFetcher):
         response = requests.post(
             _ENDPOINT, headers=headers, json=payload, timeout=_TIMEOUT
         )
+        if not response.ok:
+            try:
+                error_data = response.json()
+                error_msg = error_data.get('message', response.text)
+                raise RuntimeError(f"Serper API error: {response.status_code} - {error_msg}")
+            except ValueError:
+                pass
         response.raise_for_status()
 
         data = response.json()
